@@ -140,6 +140,6 @@ banking-modern-datastack/
 ---
 
 **Author**: *Jaya Chandra Kadiveti*  
-**LinkedIn**: [orokgospel](https://www.linkedin.com/in/jayachandrakadiveti/)  
-**Contact**: [orokgospel@gmail.com](mailto:datawithjay1@gmail.com)  
+**LinkedIn**: [orokgospel](https://www.linkedin.com/in/orokgospel/)  
+**Contact**: [orokgospel@gmail.com](mailto:orokgospel@gmail.com)  
 
