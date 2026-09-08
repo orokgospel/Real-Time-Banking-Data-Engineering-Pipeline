@@ -1,138 +1,339 @@
-version: '3.8'
+version: "3.8"
+
 services:
+
+  # ============================================================
+  # ZOOKEEPER
+  # ============================================================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    restart: unless-stopped
+
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+
     ports:
       - "2181:2181"
 
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # KAFKA
+  # ============================================================
   kafka:
     image: confluentinc/cp-kafka:7.4.1
     container_name: kafka
+    restart: unless-stopped
+
     depends_on:
       - zookeeper
+
     ports:
-      - "9092:9092"   # internal Docker network
-      - "29092:29092" # host machine access
+      - "9092:9092"
+      - "29092:29092"
+
     environment:
       KAFKA_BROKER_ID: 1
+
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+
+      KAFKA_LISTENERS: >
+        PLAINTEXT://0.0.0.0:9092,
+        PLAINTEXT_HOST://0.0.0.0:29092
+
+      KAFKA_ADVERTISED_LISTENERS: >
+        PLAINTEXT://kafka:9092,
+        PLAINTEXT_HOST://localhost:29092
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >
+        PLAINTEXT:PLAINTEXT,
+        PLAINTEXT_HOST:PLAINTEXT
+
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # DEBEZIUM KAFKA CONNECT
+  # ============================================================
   connect:
     image: debezium/connect:2.2
+    container_name: debezium-connect
+    restart: unless-stopped
+
     depends_on:
       - kafka
       - zookeeper
       - postgres
+
     ports:
       - "8083:8083"
-    environment:
-      BOOTSTRAP_SERVERS: 'kafka:9092'
-      GROUP_ID: '1'
-      CONFIG_STORAGE_TOPIC: 'connect-configs'
-      OFFSET_STORAGE_TOPIC: 'connect-offsets'
-      STATUS_STORAGE_TOPIC: 'connect-status'
-      KEY_CONVERTER_SCHEMAS_ENABLE: 'false'
-      VALUE_CONVERTER_SCHEMAS_ENABLE: 'false'
-      KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
-      VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
 
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+
+      GROUP_ID: "1"
+
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-status
+
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # SOURCE POSTGRESQL
+  # ============================================================
   postgres:
     image: postgres:15
+    container_name: postgres
+    restart: unless-stopped
+
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-banking}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-banking_password}
+      POSTGRES_DB: ${POSTGRES_DB:-banking}
+
     ports:
       - "5434:5432"
+
     volumes:
       - ./docker/postgres/data:/var/lib/postgresql/data
-    command: >
-      postgres -c wal_level=logical
-              -c max_wal_senders=10
-              -c max_replication_slots=10
-               
+
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # MINIO - S3 COMPATIBLE OBJECT STORAGE
+  # ============================================================
   minio:
     image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+
     command: server /data --console-address ":9001"
+
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+
     ports:
       - "9000:9000"
       - "9001:9001"
+
     volumes:
       - ./docker/minio/data:/data
-    
+
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # AIRFLOW METADATA DATABASE
+  # ============================================================
+  airflow-postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${AIRFLOW_DB_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # AIRFLOW WEBSERVER
+  # ============================================================
   airflow-webserver:
     build:
       context: .
       dockerfile: dockerfile-airflow.dockerfile
+
     container_name: airflow-webserver
-    restart: always
+    restart: unless-stopped
+
     depends_on:
-      - airflow-scheduler
-      - airflow-postgres
+      airflow-postgres:
+        condition: service_healthy
+
+      airflow-scheduler:
+        condition: service_started
+
+    # ----------------------------------------------------------
+    # IMPORTANT:
+    # Loads Snowflake credentials and other secrets from:
+    #
+    # ./docker/dags/.env
+    #
+    # DO NOT COMMIT THIS FILE TO GITHUB.
+    # ----------------------------------------------------------
+    env_file:
+      - ./docker/dags/.env
+
     environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+        postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+
+      AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS: "True"
+
+      # dbt / Snowflake
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-}
+      SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA:-}
+
     volumes:
       - ./docker/dags:/opt/airflow/dags
       - ./docker/logs:/opt/airflow/logs
       - ./docker/plugins:/opt/airflow/plugins
+
+      # dbt project
       - ./banking_dbt:/opt/airflow/banking_dbt
+
+      # dbt profiles.yml
       - ./banking_dbt/.dbt:/home/airflow/.dbt
+
     ports:
       - "8080:8080"
+
     command: webserver
 
+    networks:
+      - banking-mds-net
+
+
+  # ============================================================
+  # AIRFLOW SCHEDULER
+  # ============================================================
   airflow-scheduler:
     build:
       context: .
       dockerfile: dockerfile-airflow.dockerfile
+
     container_name: airflow-scheduler
-    restart: always
+    restart: unless-stopped
+
     depends_on:
-      - airflow-postgres
+      airflow-postgres:
+        condition: service_healthy
+
+    # ----------------------------------------------------------
+    # IMPORTANT:
+    # BashOperator/dbt runs inside this container.
+    #
+    # Therefore the Snowflake environment variables MUST
+    # be available here.
+    # ----------------------------------------------------------
+    env_file:
+      - ./docker/dags/.env
+
     environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+        postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+
+      AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS: "True"
+
+      # dbt / Snowflake
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-}
+      SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA:-}
+
     volumes:
       - ./docker/dags:/opt/airflow/dags
       - ./docker/logs:/opt/airflow/logs
       - ./docker/plugins:/opt/airflow/plugins
+
+      # dbt project
       - ./banking_dbt:/opt/airflow/banking_dbt
+
+      # dbt profiles.yml
       - ./banking_dbt/.dbt:/home/airflow/.dbt
+
     command: scheduler
 
+    networks:
+      - banking-mds-net
 
 
-  airflow-postgres:
-    image: postgres:15
-    container_name: airflow-postgres
-    restart: always
-    environment:
-      POSTGRES_USER: ${AIRFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
-      POSTGRES_DB: ${AIRFLOW_DB_NAME}
-    volumes:
-      - airflow_postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"  # separate from banking-postgres to avoid conflict
-
+# ==============================================================
+# VOLUMES
+# ==============================================================
 volumes:
   airflow_postgres_data:
-  postgres_data:
+
+
+# ==============================================================
+# NETWORK
+# ==============================================================
 networks:
-  default:
+  banking-mds-net:
     name: banking-mds-net
+    driver: bridge
