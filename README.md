@@ -142,7 +142,6 @@ banking-modern-datastack/
 <<<<<<< HEAD
 **Author**: *Gospel Orok*  
 =======
-**Author**: *Jaya Chandra Kadiveti*  
 >>>>>>> dd52474 (fix: update Airflow dbt Snowflake configuration)
 **LinkedIn**: [orokgospel](https://www.linkedin.com/in/orokgospel/)  
 **Contact**: [orokgospel@gmail.com](mailto:orokgospel@gmail.com)  
