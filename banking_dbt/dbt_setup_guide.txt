@@ -1,0 +1,164 @@
+# dbt + Snowflake Setup Guide
+
+This guide sets up **dbt Core + Snowflake** for the Banking Modern Data Stack.
+
+## 1. Prerequisites
+
+Install:
+
+* Python 3.13
+* Git for Windows
+* Snowflake account
+
+Check:
+
+```powershell
+python --version
+git --version
+```
+
+Git: [Download Git for Windows](https://git-scm.com/download/win?utm_source=chatgpt.com)
+
+During Git installation, select **"Git from the command line and also from 3rd-party software"**.
+
+---
+
+## 2. Create dbt Virtual Environment
+
+From the project root:
+
+```powershell
+cd "C:\Users\NEW USER\banking-modern-datastack"
+
+py -3.13 -m venv .dbt-venv
+
+.\.dbt-venv\Scripts\Activate.ps1
+```
+
+Verify:
+
+```powershell
+python --version
+```
+
+Expected:
+
+```text
+Python 3.13.x
+```
+
+---
+
+## 3. Install dbt
+
+```powershell
+python -m pip install --upgrade pip
+pip install dbt-core dbt-snowflake
+```
+
+Verify:
+
+```powershell
+dbt --version
+```
+
+---
+
+## 4. Create dbt Project
+
+Project structure:
+
+```text
+banking_dbt/
+├── dbt_project.yml
+├── models/
+├── snapshots/
+├── tests/
+├── seeds/
+├── macros/
+└── analyses/
+```
+
+Ensure `dbt_project.yml` is directly inside `banking_dbt/`.
+
+---
+
+## 5. Configure Snowflake
+
+Create:
+
+```text
+C:\Users\NEW USER\.dbt\profiles.yml
+```
+
+```yaml
+banking_dbt:
+  target: dev
+
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DB') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA') }}"
+      threads: 4
+      client_session_keep_alive: false
+```
+
+Set the environment variables in PowerShell:
+
+```powershell
+$env:SNOWFLAKE_USER="your_username"
+$env:SNOWFLAKE_PASSWORD="your_password"
+$env:SNOWFLAKE_ACCOUNT="your_account"
+$env:SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
+$env:SNOWFLAKE_DB="BANKING"
+$env:SNOWFLAKE_SCHEMA="RAW"
+```
+
+**Never commit your password to Git.**
+
+---
+
+## 6. Validate Setup
+
+From the project root:
+
+```powershell
+.\.dbt-venv\Scripts\dbt.exe debug --project-dir .\banking_dbt
+```
+
+Successful setup should show:
+
+```text
+profiles.yml file [OK found and valid]
+dbt_project.yml file [OK found and valid]
+git [OK found]
+Connection test: [OK connection ok]
+
+All checks passed!
+```
+
+## 7. Target Architecture
+
+```text
+PostgreSQL
+    ↓
+Debezium → Kafka
+    ↓
+Python CDC Consumer
+    ↓
+MinIO / Parquet
+    ↓
+Snowflake RAW
+    ↓
+dbt STAGING
+    ↓
+dbt INTERMEDIATE
+    ↓
+dbt MARTS
+```
+**Next:** Build the dbt `sources.yml`, staging models, tests, snapshots, and marts for `customers`, `accounts`, and `transactions`.
